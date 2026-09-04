@@ -15,13 +15,6 @@
     <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
     <!-- Babel for JSX compilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Firebase SDKs UMD -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-        window.firebaseAppModules = { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, doc, setDoc, onSnapshot, getDoc };
-    </script>
     <script>
         // Suppress Recharts defaultProps deprecation warnings in console
         const originalError = console.error;
@@ -95,8 +88,6 @@
         const CalendarDays = ({ className = "w-4 h-4" }) => (
             <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path><path d="M16 18h.01"></path></svg>
         );
-
-        const firebaseModules = window.firebaseAppModules || {};
 
         const CHURN_ROW_HEIGHT = 56;
         const CHURN_HEADER_HEIGHT = 48;
@@ -316,7 +307,6 @@
         };
 
         function App() {
-            const [user, setUser] = useState(null);
             const [rawOnboardingRows, setRawOnboardingRows] = useState([]);
             const [filterStartDate, setFilterStartDate] = useState('');
             const [filterEndDate, setFilterEndDate] = useState('');
@@ -332,7 +322,6 @@
             const [paidCancelled, setPaidCancelled] = useState(0);
             const [hasOnboardingData, setHasOnboardingData] = useState(false);
             const [hasPaymentData, setHasPaymentData] = useState(false);
-            const [isSyncing, setIsSyncing] = useState(false);
             const [trendViewMode, setTrendViewMode] = useState('weekly');
             const [earlyChurnViewMode, setEarlyChurnViewMode] = useState('weekly');
             const [onboardingViewMode, setOnboardingViewMode] = useState('weekly');
@@ -341,113 +330,49 @@
 
             const fileInputRef = useRef(null);
 
-            const firebaseConfig = JSON.parse(window.__firebase_config || '{}');
-            const appId = typeof window.__app_id !== 'undefined' ? window.__app_id : 'default-shopify-dashboard';
-            const [dbInstance, setDbInstance] = useState(null);
-            const [authInstance, setAuthInstance] = useState(null);
-
+            // Load saved data from localStorage on initial render for seamless sharing and browser persistence
             useEffect(() => {
-                if (!firebaseModules.initializeApp) return;
                 try {
-                    const app = firebaseModules.initializeApp(firebaseConfig);
-                    const authObj = firebaseModules.getAuth(app);
-                    const firestore = firebaseModules.getFirestore(app);
-                    setDbInstance(firestore);
-                    setAuthInstance(authObj);
-
-                    const initAuth = async () => {
-                        try {
-                            if (typeof window.__initial_auth_token !== 'undefined' && window.__initial_auth_token) {
-                                await firebaseModules.signInWithCustomToken(authObj, window.__initial_auth_token);
-                            } else {
-                                await firebaseModules.signInAnonymously(authObj);
-                            }
-                        } catch (err) {
-                            console.error("Auth error:", err);
-                        }
-                    };
-                    initAuth();
-                    const unsubscribe = firebaseModules.onAuthStateChanged(authObj, setUser);
-                    return () => unsubscribe();
+                    const savedOnboarding = localStorage.getItem('shopify_onboarding_csv');
+                    const savedPayment = localStorage.getItem('shopify_payment_csv');
+                    if (savedOnboarding) {
+                        processOnboardingData(savedOnboarding);
+                    }
+                    if (savedPayment) {
+                        processPaymentData(savedPayment);
+                    }
                 } catch (err) {
-                    console.error("Firebase init error:", err);
+                    console.error("Storage load error:", err);
                 }
             }, []);
 
-            // Real-time sync & Initial load
-            useEffect(() => {
-                if (!dbInstance) return;
-                setIsSyncing(true);
-                const dataDocRef = firebaseModules.doc(dbInstance, 'artifacts', appId, 'public', 'data', 'storage', 'csv_data');
-                
-                // Fetch immediately
-                firebaseModules.getDoc(dataDocRef).then((docSnap) => {
-                    if (docSnap.exists()) {
-                        const data = docSnap.data();
-                        if (data.onboardingCsv) processOnboardingData(data.onboardingCsv, false);
-                        if (data.paymentCsv) processPaymentData(data.paymentCsv, false);
-                    }
-                    setIsSyncing(false);
-                }).catch(err => {
-                    console.error("Initial fetch error:", err);
-                    setIsSyncing(false);
-                });
-
-                // Listen for updates
-                const unsubscribe = firebaseModules.onSnapshot(dataDocRef, (docSnap) => {
-                    if (docSnap.exists()) {
-                        const data = docSnap.data();
-                        if (data.onboardingCsv) processOnboardingData(data.onboardingCsv, false);
-                        if (data.paymentCsv) processPaymentData(data.paymentCsv, false);
-                    }
-                }, (error) => {
-                    console.error("Firestore sync error:", error);
-                });
-                return () => unsubscribe();
-            }, [dbInstance]);
-
-            const handleFileUpload = async (e) => {
+            const handleFileUpload = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
 
-                if (authInstance && !authInstance.currentUser) {
-                    try {
-                        await firebaseModules.signInAnonymously(authInstance);
-                    } catch (err) {
-                        console.error("Anonymous sign-in failed during upload:", err);
-                    }
-                }
-
-                setIsSyncing(true);
                 const reader = new FileReader();
-                reader.onload = async (ev) => {
+                reader.onload = (ev) => {
                     const text = ev.target.result;
                     try {
-                        if (dbInstance) {
-                            const dataDocRef = firebaseModules.doc(dbInstance, 'artifacts', appId, 'public', 'data', 'storage', 'csv_data');
-                            if (text.includes('앱설치일')) {
-                                await firebaseModules.setDoc(dataDocRef, { onboardingCsv: text }, { merge: true });
-                            } else if (text.includes('신청 플랜')) {
-                                await firebaseModules.setDoc(dataDocRef, { paymentCsv: text }, { merge: true });
-                            }
-                        }
                         if (text.includes('앱설치일')) {
-                            processOnboardingData(text, true);
+                            localStorage.setItem('shopify_onboarding_csv', text);
+                            processOnboardingData(text);
                         } else if (text.includes('신청 플랜')) {
-                            processPaymentData(text, true);
+                            localStorage.setItem('shopify_payment_csv', text);
+                            processPaymentData(text);
+                        } else {
+                            alert("올바른 Shopify CSV 파일 형식이 아닙니다.");
                         }
                     } catch (err) {
-                        console.error("Cloud upload error:", err);
-                        alert("업로드 중 오류가 발생했습니다: " + err.message);
-                    } finally {
-                        setIsSyncing(false);
+                        console.error("File processing error:", err);
+                        alert("파일 처리 중 오류가 발생했습니다.");
                     }
                 };
                 reader.readAsText(file);
                 e.target.value = null;
             };
 
-            const processOnboardingData = (csvText, isLocalUpload = false) => {
+            const processOnboardingData = (csvText) => {
                 try {
                     const lines = csvText.split('\n').filter(l => l.trim().length > 5);
                     if (lines.length < 1) return;
@@ -605,7 +530,7 @@
                 })));
             }, [rawOnboardingRows, filterStartDate, filterEndDate]);
 
-            const processPaymentData = (csvText, isLocalUpload = false) => {
+            const processPaymentData = (csvText) => {
                 try {
                     const lines = csvText.split('\n').filter(l => l.trim().length > 2);
                     const headers = parseCSVLine(lines[0]);
@@ -705,17 +630,16 @@
                             <div className="flex gap-2 mt-2">
                                 {hasOnboardingData && <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-full flex items-center"><FileText className="w-3 h-3 mr-1" /> 온보딩 데이터 활성</span>}
                                 {hasPaymentData && <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-full flex items-center"><CreditCard className="w-3 h-3 mr-1" /> 결제 데이터 활성</span>}
-                                <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-full flex items-center"><Cloud className="w-3 h-3 mr-1" /> 클라우드 연동됨</span>
+                                <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-full flex items-center"><Cloud className="w-3 h-3 mr-1" /> 로컬 동기화 활성</span>
                             </div>
                         </div>
                         <div className="flex gap-2">
                             <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv" className="hidden" />
                             <button
-                                disabled={isSyncing}
                                 onClick={() => fileInputRef.current.click()}
-                                className="flex items-center px-4 py-2 bg-slate-800 text-white rounded-xl font-bold text-sm shadow-lg hover:bg-slate-700 transition ring-2 ring-slate-200 ring-offset-2 tracking-tight disabled:opacity-50 cursor-pointer"
+                                className="flex items-center px-4 py-2 bg-slate-800 text-white rounded-xl font-bold text-sm shadow-lg hover:bg-slate-700 transition ring-2 ring-slate-200 ring-offset-2 tracking-tight cursor-pointer"
                             >
-                                {isSyncing ? "동기화 중..." : <span className="flex items-center"><Upload className="w-4 h-4 mr-2" /> 데이터 업로드</span>}
+                                <span className="flex items-center"><Upload className="w-4 h-4 mr-2" /> 데이터 업로드</span>
                             </button>
                         </div>
                     </header>
@@ -734,9 +658,9 @@
                         <span className="text-[10px] text-slate-400 ml-auto hidden md:block">그래프 영역을 드래그하여 좌우로 스크롤 할 수 있습니다.</span>
                     </div>
 
-                    {!hasOnboardingData && !isSyncing && (
+                    {!hasOnboardingData && (
                         <div className="max-w-7xl mx-auto mb-6 p-6 bg-white border-2 border-dashed border-slate-200 rounded-2xl text-center">
-                            <p className="text-slate-400 font-medium font-sans">업로드된 클라우드 데이터가 없습니다. CSV 파일을 업로드하면 링크를 공유받은 모두가 함께 볼 수 있습니다.</p>
+                            <p className="text-slate-400 font-medium font-sans">업로드된 CSV 데이터가 없습니다. 우측 상단의 [데이터 업로드] 버튼을 눌러주세요.</p>
                         </div>
                     )}
 
