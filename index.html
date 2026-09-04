@@ -9,7 +9,7 @@
     <!-- React & ReactDOM (Development UMD) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <!-- PropTypes -->
+    <!-- PropTypes (Required for Recharts UMD to prevent oneOfType errors) -->
     <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
     <!-- Recharts -->
     <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
@@ -19,8 +19,8 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-        window.firebaseAppModules = { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, doc, setDoc, onSnapshot };
+        import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        window.firebaseAppModules = { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, doc, setDoc, onSnapshot, getDoc };
     </script>
     <script>
         // Suppress Recharts defaultProps deprecation warnings in console
@@ -374,21 +374,34 @@
                 }
             }, []);
 
+            // Real-time sync & Initial load
             useEffect(() => {
                 if (!dbInstance) return;
                 setIsSyncing(true);
-                // STRICT RULE 1: Using public storage path for shared collaborative data
                 const dataDocRef = firebaseModules.doc(dbInstance, 'artifacts', appId, 'public', 'data', 'storage', 'csv_data');
-                const unsubscribe = firebaseModules.onSnapshot(dataDocRef, (docSnap) => {
+                
+                // Fetch immediately
+                firebaseModules.getDoc(dataDocRef).then((docSnap) => {
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         if (data.onboardingCsv) processOnboardingData(data.onboardingCsv, false);
                         if (data.paymentCsv) processPaymentData(data.paymentCsv, false);
                     }
                     setIsSyncing(false);
+                }).catch(err => {
+                    console.error("Initial fetch error:", err);
+                    setIsSyncing(false);
+                });
+
+                // Listen for updates
+                const unsubscribe = firebaseModules.onSnapshot(dataDocRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        if (data.onboardingCsv) processOnboardingData(data.onboardingCsv, false);
+                        if (data.paymentCsv) processPaymentData(data.paymentCsv, false);
+                    }
                 }, (error) => {
                     console.error("Firestore sync error:", error);
-                    setIsSyncing(false);
                 });
                 return () => unsubscribe();
             }, [dbInstance]);
@@ -418,7 +431,6 @@
                                 await firebaseModules.setDoc(dataDocRef, { paymentCsv: text }, { merge: true });
                             }
                         }
-                        // Also immediately parse locally so the uploading user sees the result instantly
                         if (text.includes('앱설치일')) {
                             processOnboardingData(text, true);
                         } else if (text.includes('신청 플랜')) {
