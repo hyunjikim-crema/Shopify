@@ -375,7 +375,7 @@
             }, []);
 
             useEffect(() => {
-                if (!user || !dbInstance) return;
+                if (!dbInstance) return;
                 setIsSyncing(true);
                 // STRICT RULE 1: Using public storage path for shared collaborative data
                 const dataDocRef = firebaseModules.doc(dbInstance, 'artifacts', appId, 'public', 'data', 'storage', 'csv_data');
@@ -391,18 +391,17 @@
                     setIsSyncing(false);
                 });
                 return () => unsubscribe();
-            }, [user, dbInstance]);
+            }, [dbInstance]);
 
             const handleFileUpload = async (e) => {
                 const file = e.target.files[0];
-                if (!file || !dbInstance) return;
+                if (!file) return;
 
                 if (authInstance && !authInstance.currentUser) {
                     try {
                         await firebaseModules.signInAnonymously(authInstance);
                     } catch (err) {
                         console.error("Anonymous sign-in failed during upload:", err);
-                        return;
                     }
                 }
 
@@ -410,17 +409,24 @@
                 const reader = new FileReader();
                 reader.onload = async (ev) => {
                     const text = ev.target.result;
-                    const dataDocRef = firebaseModules.doc(dbInstance, 'artifacts', appId, 'public', 'data', 'storage', 'csv_data');
                     try {
+                        if (dbInstance) {
+                            const dataDocRef = firebaseModules.doc(dbInstance, 'artifacts', appId, 'public', 'data', 'storage', 'csv_data');
+                            if (text.includes('앱설치일')) {
+                                await firebaseModules.setDoc(dataDocRef, { onboardingCsv: text }, { merge: true });
+                            } else if (text.includes('신청 플랜')) {
+                                await firebaseModules.setDoc(dataDocRef, { paymentCsv: text }, { merge: true });
+                            }
+                        }
+                        // Also immediately parse locally so the uploading user sees the result instantly
                         if (text.includes('앱설치일')) {
-                            await firebaseModules.setDoc(dataDocRef, { onboardingCsv: text }, { merge: true });
                             processOnboardingData(text, true);
                         } else if (text.includes('신청 플랜')) {
-                            await firebaseModules.setDoc(dataDocRef, { paymentCsv: text }, { merge: true });
                             processPaymentData(text, true);
                         }
                     } catch (err) {
                         console.error("Cloud upload error:", err);
+                        alert("업로드 중 오류가 발생했습니다: " + err.message);
                     } finally {
                         setIsSyncing(false);
                     }
@@ -693,9 +699,9 @@
                         <div className="flex gap-2">
                             <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv" className="hidden" />
                             <button
-                                disabled={!dbInstance || isSyncing}
+                                disabled={isSyncing}
                                 onClick={() => fileInputRef.current.click()}
-                                className="flex items-center px-4 py-2 bg-slate-800 text-white rounded-xl font-bold text-sm shadow-lg hover:bg-slate-700 transition ring-2 ring-slate-200 ring-offset-2 tracking-tight disabled:opacity-50"
+                                className="flex items-center px-4 py-2 bg-slate-800 text-white rounded-xl font-bold text-sm shadow-lg hover:bg-slate-700 transition ring-2 ring-slate-200 ring-offset-2 tracking-tight disabled:opacity-50 cursor-pointer"
                             >
                                 {isSyncing ? "동기화 중..." : <span className="flex items-center"><Upload className="w-4 h-4 mr-2" /> 데이터 업로드</span>}
                             </button>
