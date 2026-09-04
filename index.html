@@ -330,19 +330,19 @@
 
             const fileInputRef = useRef(null);
 
-            // Robust LocalStorage initialization to survive page reloads and browser sessions
+            // Robust local persistence loader on mount
             useEffect(() => {
                 try {
-                    const savedOnboarding = localStorage.getItem('shopify_onboarding_csv_persistent');
-                    const savedPayment = localStorage.getItem('shopify_payment_csv_persistent');
+                    const savedOnboarding = localStorage.getItem('shopify_dashboard_onboarding_data');
+                    const savedPayment = localStorage.getItem('shopify_dashboard_payment_data');
                     if (savedOnboarding) {
-                        processOnboardingData(savedOnboarding);
+                        processOnboardingData(savedOnboarding, false);
                     }
                     if (savedPayment) {
-                        processPaymentData(savedPayment);
+                        processPaymentData(savedPayment, false);
                     }
                 } catch (err) {
-                    console.error("Storage load error:", err);
+                    console.error("Local storage load error:", err);
                 }
             }, []);
 
@@ -355,11 +355,11 @@
                     const text = ev.target.result;
                     try {
                         if (text.includes('앱설치일')) {
-                            localStorage.setItem('shopify_onboarding_csv_persistent', text);
-                            processOnboardingData(text);
+                            localStorage.setItem('shopify_dashboard_onboarding_data', text);
+                            processOnboardingData(text, true);
                         } else if (text.includes('신청 플랜')) {
-                            localStorage.setItem('shopify_payment_csv_persistent', text);
-                            processPaymentData(text);
+                            localStorage.setItem('shopify_dashboard_payment_data', text);
+                            processPaymentData(text, true);
                         } else {
                             alert("올바른 Shopify CSV 파일 형식이 아닙니다.");
                         }
@@ -372,7 +372,7 @@
                 e.target.value = null;
             };
 
-            const processOnboardingData = (csvText) => {
+            const processOnboardingData = (csvText, showAlert = false) => {
                 try {
                     const lines = csvText.split('\n').filter(l => l.trim().length > 5);
                     if (lines.length < 1) return;
@@ -416,6 +416,55 @@
 
                     setRawOnboardingRows(rows);
                     setHasOnboardingData(true);
+                    if (showAlert) alert("온보딩 데이터가 성공적으로 반영되었습니다!");
+                } catch (e) { console.error(e); }
+            };
+
+            const processPaymentData = (csvText, showAlert = false) => {
+                try {
+                    const lines = csvText.split('\n').filter(l => l.trim().length > 2);
+                    const headers = parseCSVLine(lines[0]);
+                    const idxPlan = headers.findIndex(h => h.trim().includes('신청 플랜'));
+                    const idxCancel = headers.findIndex(h => h.trim().includes('해지'));
+                    const planCounts = { 'Flexible': 0, 'Unlimited 30': 0, 'Unlimited 365': 0 };
+                    let activeTotal = 0;
+                    let addedTotal = 0;
+                    let cancelledTotal = 0;
+
+                    lines.slice(1).forEach(line => {
+                        const cols = parseCSVLine(line);
+                        const pNameRaw = cols[idxPlan]?.replace(/["']/g, '').trim();
+                        const pName = pNameRaw?.toLowerCase();
+                        let isCancelled = false;
+                        if (idxCancel !== -1 && cols[idxCancel]) {
+                            const cancelVal = cols[idxCancel].replace(/["']/g, '').trim().toUpperCase();
+                            if (cancelVal && cancelVal !== 'FALSE' && cancelVal !== '0') {
+                                isCancelled = true;
+                            }
+                        }
+
+                        if (pName) {
+                            addedTotal++;
+                            if (isCancelled) {
+                                cancelledTotal++;
+                            } else {
+                                activeTotal++;
+                                if (pName.includes('flexible')) { planCounts['Flexible']++; }
+                                else if (pName.includes('30')) { planCounts['Unlimited 30']++; }
+                                else if (pName.includes('365')) { planCounts['Unlimited 365']++; }
+                            }
+                        }
+                    });
+                    setPlanData([
+                        { name: 'Flexible', count: planCounts['Flexible'], color: '#fbbf24' },
+                        { name: 'Unlimited 30', count: planCounts['Unlimited 30'], color: '#3b82f6' },
+                        { name: 'Unlimited 365', count: planCounts['Unlimited 365'], color: '#4f46e5' }
+                    ]);
+                    setTotalPaidUsers(activeTotal);
+                    setPaidAdded(addedTotal);
+                    setPaidCancelled(cancelledTotal);
+                    setHasPaymentData(true);
+                    if (showAlert) alert("결제 데이터가 성공적으로 반영되었습니다!");
                 } catch (e) { console.error(e); }
             };
 
@@ -529,53 +578,6 @@
                     retentionRate: d.newInstalls ? (((Math.max(0, d.newInstalls - d.uninstalls - d.storeClosed))/d.newInstalls)*100).toFixed(1) : 0
                 })));
             }, [rawOnboardingRows, filterStartDate, filterEndDate]);
-
-            const processPaymentData = (csvText) => {
-                try {
-                    const lines = csvText.split('\n').filter(l => l.trim().length > 2);
-                    const headers = parseCSVLine(lines[0]);
-                    const idxPlan = headers.findIndex(h => h.trim().includes('신청 플랜'));
-                    const idxCancel = headers.findIndex(h => h.trim().includes('해지'));
-                    const planCounts = { 'Flexible': 0, 'Unlimited 30': 0, 'Unlimited 365': 0 };
-                    let activeTotal = 0;
-                    let addedTotal = 0;
-                    let cancelledTotal = 0;
-
-                    lines.slice(1).forEach(line => {
-                        const cols = parseCSVLine(line);
-                        const pNameRaw = cols[idxPlan]?.replace(/["']/g, '').trim();
-                        const pName = pNameRaw?.toLowerCase();
-                        let isCancelled = false;
-                        if (idxCancel !== -1 && cols[idxCancel]) {
-                            const cancelVal = cols[idxCancel].replace(/["']/g, '').trim().toUpperCase();
-                            if (cancelVal && cancelVal !== 'FALSE' && cancelVal !== '0') {
-                                isCancelled = true;
-                            }
-                        }
-
-                        if (pName) {
-                            addedTotal++;
-                            if (isCancelled) {
-                                cancelledTotal++;
-                            } else {
-                                activeTotal++;
-                                if (pName.includes('flexible')) { planCounts['Flexible']++; }
-                                else if (pName.includes('30')) { planCounts['Unlimited 30']++; }
-                                else if (pName.includes('365')) { planCounts['Unlimited 365']++; }
-                            }
-                        }
-                    });
-                    setPlanData([
-                        { name: 'Flexible', count: planCounts['Flexible'], color: '#fbbf24' },
-                        { name: 'Unlimited 30', count: planCounts['Unlimited 30'], color: '#3b82f6' },
-                        { name: 'Unlimited 365', count: planCounts['Unlimited 365'], color: '#4f46e5' }
-                    ]);
-                    setTotalPaidUsers(activeTotal);
-                    setPaidAdded(addedTotal);
-                    setPaidCancelled(cancelledTotal);
-                    setHasPaymentData(true);
-                } catch (e) { console.error(e); }
-            };
 
             const totalInstalls = useMemo(() => weeklyData.reduce((acc, curr) => acc + (Number(curr.newInstalls) || 0), 0), [weeklyData]);
             const totalCompleted = useMemo(() => weeklyData.reduce((acc, curr) => acc + (Number(curr.s3) || 0), 0), [weeklyData]);
